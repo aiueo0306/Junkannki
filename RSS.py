@@ -4,14 +4,15 @@ from urllib.parse import urljoin
 import os
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
-BASE_URL = "https://iryohokenjyoho.service-now.com/csm?id=csm_index"
-DEFAULT_LINK = "https://iryohokenjyoho.service-now.com/csm?id=kb_search&kb_knowledge_base=..."  # ← 実際のURLに書き換えてください
+BASE_URL = "https://www.j-circ.or.jp"
+DEFAULT_LINK = "https://www.j-circ.or.jp/topics/"
+
 
 def generate_rss(items, output_path):
     fg = FeedGenerator()
-    fg.title("医療機関向等総合ポータルサイト")
+    fg.title("日本循環器学会トピックス")
     fg.link(href=DEFAULT_LINK)
-    fg.description("医療機関向等総合ポータルサイトページの更新履歴")
+    fg.description("日本循環器学会の最新トピック情報")
     fg.language("ja")
     fg.generator("python-feedgen")
     fg.docs("http://www.rssboard.org/rss-specification")
@@ -30,40 +31,40 @@ def generate_rss(items, output_path):
     fg.rss_file(output_path)
     print(f"\n✅ RSSフィード生成完了！📄 保存先: {output_path}")
 
-def extract_items(page):
-    page.goto(DEFAULT_LINK, timeout=30000)
-    page.wait_for_load_state("networkidle")
-    page.wait_for_selector("div.summary-templates", timeout=10000)
 
-    selector = "div.summary-templates > div.kb-template.ng-scope > div:nth-child(2) > div > div > div"
+def extract_items(page):
+    selector = "article.c-list--info__item"
     rows = page.locator(selector)
     count = rows.count()
-    print(f"📦 発見した更新情報行数: {count}")
+    print(f"📦 発見した記事数: {count}")
     items = []
 
-    for i in range(count):
+    max_items = 10  # 任意の制限
+    for i in range(min(count, max_items)):
         row = rows.nth(i)
         try:
-            time_elem = row.locator("sn-time-ago > time")
-            time_str = time_elem.get_attribute("title")
-            if time_str:
-                pub_date = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-            else:
-                pub_date = datetime.now(timezone.utc)
+            # 日付取得
+            time_text = row.locator("time.c-list--info__item__date").get_attribute("datetime")
+            pub_date = datetime.strptime(time_text, "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
-            description_html = row.locator("div.kb-description").inner_text().strip()
+            # タイトルとリンク取得
+            a_tag = row.locator("h4.c-list--info__item__ttl a")
+            title = a_tag.inner_text().strip()
+            href = a_tag.get_attribute("href")
+            full_link = urljoin(BASE_URL, href) if href else DEFAULT_LINK
 
-            a_links = row.locator("a")
-            first_link = DEFAULT_LINK
-            if a_links.count() > 0:
-                href = a_links.first.get_attribute("href")
-                if href:
-                    first_link = urljoin(BASE_URL, href)
+            # カテゴリの結合（ul > li）
+            cats = row.locator("ul.c-cats--topics li")
+            cat_texts = [cats.nth(j).inner_text().strip() for j in range(cats.count())]
+            category = " / ".join(cat_texts)
+
+            # 説明にカテゴリ含める
+            description = f"{category}：{title}"
 
             items.append({
-                "title": f"更新情報: {pub_date.strftime('%Y-%m-%d')}",
-                "link": first_link,
-                "description": description_html,
+                "title": title,
+                "link": full_link,
+                "description": description,
                 "pub_date": pub_date
             })
 
@@ -72,6 +73,7 @@ def extract_items(page):
             continue
 
     return items
+
 
 # ===== 実行ブロック =====
 with sync_playwright() as p:
@@ -89,12 +91,12 @@ with sync_playwright() as p:
         browser.close()
         exit()
 
-    print("▶ 更新情報を抽出しています...")
+    print("▶ 記事を抽出しています...")
     items = extract_items(page)
 
     if not items:
-        print("⚠ 抽出できた更新情報がありません。HTML構造が変わっている可能性があります。")
+        print("⚠ 抽出できた記事がありません。HTML構造が変わっている可能性があります。")
 
-    rss_path = "rss_output/IryokikanPortal.xml"
+    rss_path = "rss_output/jcirc_topics.xml"
     generate_rss(items, rss_path)
     browser.close()
